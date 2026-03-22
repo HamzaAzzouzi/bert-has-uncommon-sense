@@ -24,7 +24,7 @@ from allennlp.training.optimizers import HuggingfaceAdamWOptimizer
 
 import bssp
 from bssp.common import paths
-from bssp.common.analysis import metrics_at_k, dataset_stats
+from bssp.common.analysis import geometry_by_bucket, metrics_at_k, dataset_stats
 from bssp.common.config import Config
 from bssp.common.pickle import pickle_read
 from bssp.common.reading import read_dataset_cached, make_indexer, make_embedder
@@ -74,7 +74,7 @@ def trial(corpus_slug, embedding_model, metric, override_weights, top_n, query_n
     )
     predict(cfg)
     label_freqs, lemma_freqs = read_stats(cfg)
-    df = pd.read_csv(paths.predictions_tsv_path(cfg), sep="\t", error_bad_lines=False)
+    df = pd.read_csv(paths.predictions_tsv_path(cfg), sep="\t", on_bad_lines="skip")
     lemma_f = get_lemma_f(cfg)
     for min_train_freq, max_train_freq in cfg.train_freq_buckets:
         for min_rarity, max_rarity in cfg.prevalence_buckets:
@@ -120,6 +120,11 @@ def read_datasets(cfg):
         test_dataset = dev_dataset + test_dataset
     else:
         raise Exception(f"Unknown corpus: {cfg.corpus_name}")
+
+    if not train_dataset:
+        raise RuntimeError(
+            f"No training instances were loaded for corpus {cfg.corpus_name}. Check the dataset path and format."
+        )
 
     print(train_dataset[0])
     return train_dataset, test_dataset
@@ -308,8 +313,9 @@ def summarize(corpus_slug, embedding_model, metric, override_weights, top_n, que
         bert_layers=[bert_layer],
     )
     label_freqs, lemma_freqs = read_stats(cfg)
-    df = pd.read_csv(paths.predictions_tsv_path(cfg), sep="\t", error_bad_lines=False)
+    df = pd.read_csv(paths.predictions_tsv_path(cfg), sep="\t", on_bad_lines="skip")
     lemma_f = get_lemma_f(cfg)
+    train_dataset, _ = read_datasets(cfg)
 
     low_freq, high_freq = (5, 500), (500, 1e9)
     low_rarity, high_rarity = (0.0, 0.25), (0.25, 1.0)
@@ -319,6 +325,17 @@ def summarize(corpus_slug, embedding_model, metric, override_weights, top_n, que
             metrics_at_k(
                 cfg,
                 df,
+                label_freqs,
+                lemma_freqs,
+                lemma_f,
+                min_train_freq=min_train_freq,
+                max_train_freq=max_train_freq,
+                min_rarity=min_rarity,
+                max_rarity=max_rarity,
+            )
+            geometry = geometry_by_bucket(
+                cfg,
+                train_dataset,
                 label_freqs,
                 lemma_freqs,
                 lemma_f,
@@ -348,7 +365,10 @@ def summarize(corpus_slug, embedding_model, metric, override_weights, top_n, que
                     d[i] = {"label": 2 / (1 / recd[i]["label"] + 1 / precd[i]["label"])}
                 return d
 
-            def write_row(prec, rec, baseline_kind=None):
+            def scalar_or_blank(value):
+                return "" if value is None else value
+
+            def write_row(prec, rec, baseline_kind=None, hit=None, mrr=None, nsd=None, fsd=None, geometry=None):
                 f1d = get_f1d(prec, rec)
                 if cfg.override_weights_path is not None:
                     finetuning_count = cfg.override_weights_path[
@@ -362,18 +382,69 @@ def summarize(corpus_slug, embedding_model, metric, override_weights, top_n, que
                 fname_prefix += "low_rarity" if min_rarity == low_rarity[0] else "all_rarity"
                 fname_prefix += "_"
 
+                model_name = baseline_kind if baseline_kind is not None else cfg.embedding_model
+                bert_layers = "" if cfg.metric == "baseline" else (",".join(str(x) for x in cfg.bert_layers) if cfg.bert_layers is not None else "")
+
                 with open(fname_prefix + "results.tsv", "a") as f:
-                    # todo: query_n, bert_layers
                     vals = [
                         cfg.corpus_name,
-                        baseline_kind if baseline_kind is not None else cfg.embedding_model,
-                        ""
-                        if cfg.metric == "baseline"
-                        else (",".join(str(x) for x in cfg.bert_layers) if cfg.bert_layers is not None else ""),
+                        model_name,
+                        bert_layers,
                         finetuning_count,
                         mean_average(prec),
                         mean_average(rec),
                         mean_average(f1d),
+                    ]
+                    f.write("\t".join(str(x) for x in vals) + "\n")
+
+                extended_path = fname_prefix + "extended_results.tsv"
+                if not os.path.isfile(extended_path):
+                    with open(extended_path, "w") as f:
+                        f.write(
+                            "\t".join(
+                                [
+                                    "corpus",
+                                    "model",
+                                    "bert_layers",
+                                    "finetuning_count",
+                                    "mean_precision",
+                                    "mean_recall",
+                                    "mean_f1",
+                                    "mean_hit",
+                                    "mean_mrr",
+                                    "mean_nearest_same_distance",
+                                    "mean_farthest_same_distance",
+                                    "geom_intra_mean",
+                                    "geom_inter_nearest_mean",
+                                    "geom_inter_intra_ratio",
+                                    "geom_centroid_margin",
+                                ]
+                            )
+                            + "\n"
+                        )
+
+                geom_intra = geometry.get("intra_mean") if geometry else None
+                geom_inter = geometry.get("inter_nearest_mean") if geometry else None
+                geom_ratio = geometry.get("inter_intra_ratio") if geometry else None
+                geom_margin = geometry.get("centroid_margin") if geometry else None
+
+                with open(extended_path, "a") as f:
+                    vals = [
+                        cfg.corpus_name,
+                        model_name,
+                        bert_layers,
+                        finetuning_count,
+                        mean_average(prec),
+                        mean_average(rec),
+                        mean_average(f1d),
+                        scalar_or_blank(mean_average(hit) if hit else None),
+                        scalar_or_blank(mean_average(mrr) if mrr else None),
+                        scalar_or_blank(mean_average(nsd) if nsd else None),
+                        scalar_or_blank(mean_average(fsd) if fsd else None),
+                        scalar_or_blank(geom_intra),
+                        scalar_or_blank(geom_inter),
+                        scalar_or_blank(geom_ratio),
+                        scalar_or_blank(geom_margin),
                     ]
                     f.write("\t".join(str(x) for x in vals) + "\n")
 
@@ -382,12 +453,20 @@ def summarize(corpus_slug, embedding_model, metric, override_weights, top_n, que
                 bprec = pickle_read(baseline_pathf("prec"))
                 orec = pickle_read(pathf("orec"))
                 brec = pickle_read(baseline_pathf("rec"))
-                write_row(bprec, brec, baseline_kind="random baseline")
-                write_row(oprec, orec, baseline_kind="oracle")
+                bhit = pickle_read(baseline_pathf("hit"))
+                bmrr = pickle_read(baseline_pathf("mrr"))
+                bnsd = pickle_read(baseline_pathf("nsd"))
+                bfsd = pickle_read(baseline_pathf("fsd"))
+                write_row(bprec, brec, baseline_kind="random baseline", hit=bhit, mrr=bmrr, nsd=bnsd, fsd=bfsd, geometry=geometry)
+                write_row(oprec, orec, baseline_kind="oracle", geometry=geometry)
             else:
                 prec = pickle_read(pathf("prec"))
                 rec = pickle_read(pathf("rec"))
-                write_row(prec, rec)
+                hit = pickle_read(pathf("hit"))
+                mrr = pickle_read(pathf("mrr"))
+                nsd = pickle_read(pathf("nsd"))
+                fsd = pickle_read(pathf("fsd"))
+                write_row(prec, rec, hit=hit, mrr=mrr, nsd=nsd, fsd=fsd, geometry=geometry)
 
 
 @cli.command(
