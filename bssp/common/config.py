@@ -23,5 +23,8 @@ class Config:
 
     def is_transformer(self):
         return self.embedding_model in ['gpt2'] or any(
-            self.embedding_model.startswith(m) for m in ["roberta-", "bert-", "distilbert-", "distilroberta-", "xlnet-", "albert-"]
+            self.embedding_model.startswith(m) for m in [
+                "roberta-", "bert-", "distilbert-", "distilroberta-",
+                "xlnet-", "albert-", "Qwen/", "qwen",
+            ]
         )
