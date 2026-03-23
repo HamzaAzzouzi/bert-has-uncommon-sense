@@ -8,6 +8,4 @@ scratch.py
 model/
 models/
 data/
-cache/
-
-*.tsv
+cache/*
