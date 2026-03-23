@@ -22,6 +22,10 @@ from bssp.common import paths
 from bssp.common.analysis import metrics_at_k, geometry_by_bucket
 from bssp.common.config import Config
 from bssp.common.pickle import pickle_read
+from modern_models.extract_embeddings import (
+    SimpleInstance, SimpleTextField, SimpleToken,
+    SimpleSpanField, SimpleLabelField, SimpleArrayField,
+)
 
 
 def lemma_from_label(label):
