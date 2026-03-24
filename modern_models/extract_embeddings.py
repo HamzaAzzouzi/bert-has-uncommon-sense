@@ -138,25 +138,54 @@ def read_clres_instances(filepath):
 
 
 def read_ontonotes_instances(dirpath):
-    """Read OntoNotes CoNLL files. Requires allennlp_models for the Ontonotes reader."""
-    from allennlp_models.common.ontonotes import Ontonotes
+    """Read OntoNotes .gold_conll files directly (no allennlp dependency)."""
+    import glob
 
-    reader = Ontonotes()
-    for doc_path in tqdm(list(Ontonotes.dataset_path_iterator(dirpath)), desc="OntoNotes docs"):
-        for doc in reader.dataset_document_iterator(doc_path):
-            for sent in doc:
-                if all(sense is None for sense in sent.word_senses):
-                    continue
-                words = sent.words
-                for i, sense in enumerate(sent.word_senses):
-                    if sense is not None:
-                        lemma = sent.predicate_lemmas[i]
-                        pos_tag = sent.pos_tags[i]
-                        simplified_pos = (
-                            "n" if pos_tag.startswith("N") else "v" if pos_tag.startswith("V") else None
-                        )
-                        label = f"{lemma}_{simplified_pos}_{sense}"
-                        yield words, i, label
+    gold_files = sorted(glob.glob(os.path.join(dirpath, "**", "*.gold_conll"), recursive=True))
+    for filepath in tqdm(gold_files, desc="OntoNotes files"):
+        with open(filepath, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+        sentence_words = []
+        sentence_pos = []
+        sentence_lemmas = []
+        sentence_senses = []
+
+        for line in lines:
+            line = line.strip()
+            if line.startswith("#begin") or line.startswith("#end"):
+                continue
+            if line == "":
+                # End of sentence — process it
+                if sentence_words and any(s != "-" for s in sentence_senses):
+                    for i, sense in enumerate(sentence_senses):
+                        if sense != "-":
+                            lemma = sentence_lemmas[i]
+                            pos_tag = sentence_pos[i]
+                            simplified_pos = (
+                                "n" if pos_tag.startswith("N")
+                                else "v" if pos_tag.startswith("V")
+                                else None
+                            )
+                            label = f"{lemma}_{simplified_pos}_{sense}"
+                            yield list(sentence_words), i, label
+                sentence_words = []
+                sentence_pos = []
+                sentence_lemmas = []
+                sentence_senses = []
+                continue
+
+            cols = line.split()
+            if len(cols) < 8:
+                continue
+            word = cols[3]
+            pos = cols[4]
+            lemma = cols[6]
+            sense = cols[7]
+            sentence_words.append(word)
+            sentence_pos.append(pos)
+            sentence_lemmas.append(lemma)
+            sentence_senses.append(sense)
 
 
 def read_corpus(corpus_name, split):
