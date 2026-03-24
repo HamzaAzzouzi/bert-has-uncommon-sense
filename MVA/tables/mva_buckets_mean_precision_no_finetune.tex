@@ -1,0 +1,16 @@
+\begin{tabular}{lrrrr}
+\toprule
+bucket & l<500 | r<0.25 & l<500 | r>=0.25 & l>=500 | r<0.25 & l>=500 | r>=0.25 \\
+model &  &  &  &  \\
+\midrule
+Baseline & 11.66 & 56.28 & 18.46 & 49.72 \\
+Oracle & 96.41 & 100.00 & 100.00 & 100.00 \\
+bert-base-cased & 59.59 & 83.54 & 66.34 & 89.39 \\
+distilbert-base-cased & 58.06 & 83.15 & 65.09 & 88.10 \\
+roberta-base & 39.84 & 76.79 & 47.65 & 80.01 \\
+distilroberta-base & 32.42 & 72.22 & 42.29 & 70.81 \\
+albert-base-v2 & 56.53 & 82.22 & 66.64 & 88.44 \\
+xlnet-base-cased & 35.76 & 74.08 & 37.68 & 75.16 \\
+gpt2 & 21.76 & 63.40 & 33.33 & 61.01 \\
+\bottomrule
+\end{tabular}
