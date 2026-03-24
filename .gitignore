@@ -9,3 +9,5 @@ model/
 models/
 data/
 cache/*
+.venv/
+MVA/*.txt
