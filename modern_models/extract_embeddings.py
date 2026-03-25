@@ -45,10 +45,16 @@ def load_model_and_tokenizer(model_name, device):
                     trust_remote_code=True,
                 )
             model.eval()
+            # Test forward pass to catch dtype issues (e.g. XLNet doesn't support float16)
+            test_ids = tokenizer("test", return_tensors="pt")["input_ids"].to(device)
+            with torch.no_grad():
+                model(test_ids)
             return model, tokenizer
         except RuntimeError as e:
             if "expected scalar type Float but found Half" in str(e) and dtype == torch.float16:
                 print(f"float16 failed for {model_name}, retrying with float32...")
+                del model
+                torch.cuda.empty_cache()
                 continue
             raise
     raise RuntimeError(f"Failed to load {model_name} with both float16 and float32")
