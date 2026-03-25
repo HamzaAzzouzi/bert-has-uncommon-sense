@@ -26,24 +26,32 @@ def load_model_and_tokenizer(model_name, device):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    try:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16,
-            device_map=device,
-            output_hidden_states=True,
-            trust_remote_code=True,
-        )
-    except (ValueError, OSError):
-        model = AutoModel.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16,
-            device_map=device,
-            output_hidden_states=True,
-            trust_remote_code=True,
-        )
-    model.eval()
-    return model, tokenizer
+    for dtype in [torch.float16, torch.float32]:
+        try:
+            try:
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    torch_dtype=dtype,
+                    device_map=device,
+                    output_hidden_states=True,
+                    trust_remote_code=True,
+                )
+            except (ValueError, OSError):
+                model = AutoModel.from_pretrained(
+                    model_name,
+                    torch_dtype=dtype,
+                    device_map=device,
+                    output_hidden_states=True,
+                    trust_remote_code=True,
+                )
+            model.eval()
+            return model, tokenizer
+        except RuntimeError as e:
+            if "expected scalar type Float but found Half" in str(e) and dtype == torch.float16:
+                print(f"float16 failed for {model_name}, retrying with float32...")
+                continue
+            raise
+    raise RuntimeError(f"Failed to load {model_name} with both float16 and float32")
 
 
 def get_word_to_subword_map(tokenizer, words):
